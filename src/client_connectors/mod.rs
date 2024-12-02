@@ -11,5 +11,7 @@ cfg_if::cfg_if! {
         #[cfg_attr(docsrs, doc(cfg(all(feature = "wasm_client", target_family = "wasm"))))]
         mod client_connector_wasm;
         pub use client_connector_wasm::*;
+        mod web;
+        pub use web::*;
     }
 }

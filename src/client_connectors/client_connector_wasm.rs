@@ -1,6 +1,7 @@
 use crate::client::{ClientConfig, ClientConnector};
 use crate::socket::{CloseFrame, Message, RawMessage};
 
+use crate::WSError;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tungstenite::protocol::frame::coding::CloseCode as TungsteniteCloseCode;
@@ -97,11 +98,16 @@ impl ClientConnector for ClientConnectorWasm {
     /// Panics if any headers were added to the client config. Websockets on browser does not support
     /// additional headers (use [`ClientConfig::query_parameter()`] instead).
     async fn connect(&self, config: &ClientConfig) -> Result<Self::Socket, Self::WSError> {
+        let protocol = config.headers().get("sec-websocket-protocol");
+        let protocol = match protocol {
+            Some(protocol) => protocol.to_str().unwrap_or_else(|_| ""),
+            None => "",
+        };
         if config.headers().len() > 0 {
-            panic!("client may not submit HTTP headers in WASM connection requests");
+            // panic!("client may not submit HTTP headers in WASM connection requests");
         }
         let request_url = config.connect_url();
-        let socket = wasm_client_connect(String::from(request_url)).await?;
+        let socket = wasm_client_connect(String::from(request_url), protocol.to_string()).await?;
         Ok(socket)
     }
 }
@@ -109,7 +115,7 @@ impl ClientConnector for ClientConnectorWasm {
 /// Proxy websocket that allows access to a WASM websocket. We need this because
 /// `tokio_tungstenite_wasm::WebSocketStream` is !Send.
 pub struct WebSocketStreamProxy {
-    inner: fragile::Fragile<tokio_tungstenite_wasm::WebSocketStream>,
+    inner: fragile::Fragile<super::web::WebSocketStream>,
 }
 
 impl futures_util::Stream for WebSocketStreamProxy {
@@ -157,11 +163,12 @@ impl futures_util::Sink<tokio_tungstenite_wasm::Message> for WebSocketStreamProx
 
 async fn wasm_client_connect(
     request_url: String,
+    protocol: String,
 ) -> Result<WebSocketStreamProxy, tokio_tungstenite_wasm::Error> {
     let (result_sender, result_receiver) = async_channel::bounded(1usize);
 
     wasm_bindgen_futures::spawn_local(async move {
-        let result = tokio_tungstenite_wasm::connect(request_url.as_str()).await;
+        let result = super::web::connect(request_url.as_str(), protocol.as_str()).await;
         result_sender
             .send_blocking(result.map(|websocket| fragile::Fragile::new(websocket)))
             .unwrap();
